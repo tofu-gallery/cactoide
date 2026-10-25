@@ -1,3 +1,5 @@
+# Tofu (modified 2026-10-25): CACTOIDE_ADAPTER=node below keeps this image on upstream's Node server adapter, now that
+# svelte.config.js builds for Vercel by default. Tofu does not run this image (see TOFU.md).
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY package*.json .
@@ -18,6 +20,7 @@ ENV LOG_LEVEL=$LOG_LEVEL
 
 COPY . .
 
+ENV CACTOIDE_ADAPTER=node
 RUN npm run build
 RUN npm prune --production
 
