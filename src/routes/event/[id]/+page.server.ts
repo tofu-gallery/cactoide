@@ -1,6 +1,6 @@
 import { database } from '$lib/database/db';
 import { events, rsvps } from '$lib/database/schema';
-import { eq, asc } from 'drizzle-orm';
+import { eq, asc, and } from 'drizzle-orm';
 import { error, fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { logger } from '$lib/logger';
@@ -150,17 +150,30 @@ export const actions: Actions = {
 		}
 	},
 
-	removeRSVP: async ({ request }) => {
+	// Tofu (modified 2026-10-25): only the browser that added a reply can remove it, and only from this event, as the
+	// page's own Remove button (shown on your own replies alone) and the invite page's removeRSVP already intend. Upstream
+	// deleted any reply whose id was posted, and every reply's id is sent to everyone who opens the event.
+	removeRSVP: async ({ request, params, cookies }) => {
+		const eventId = params.id;
 		const formData = await request.formData();
 
 		const rsvpId = formData.get('rsvpId') as string;
+		const userId = cookies.get('cactoideUserId');
 
-		if (!rsvpId) {
-			return fail(400, { error: 'RSVP ID is required' });
+		if (!rsvpId || !userId) {
+			return fail(400, { error: 'RSVP ID and user ID are required' });
 		}
 
 		try {
-			await database.delete(rsvps).where(eq(rsvps.id, rsvpId));
+			const removed = await database
+				.delete(rsvps)
+				.where(and(eq(rsvps.id, rsvpId), eq(rsvps.eventId, eventId), eq(rsvps.userId, userId)))
+				.returning({ id: rsvps.id });
+
+			if (removed.length === 0) {
+				return fail(404, { error: 'RSVP not found or you do not have permission to remove it' });
+			}
+
 			return { success: true, type: 'remove' };
 		} catch (err) {
 			logger.error({ error: err, rsvpId }, 'Error removing RSVP');
