@@ -162,7 +162,12 @@
 		"publicDescription": "Gli eventi pubblici sono visibili a tutti e possono essere scoperti da altri.",
 		"privateDescription": "Gli eventi privati sono visibili solo a te e alle persone con cui condividi il link.",
 		"creatingEvent": "Creazione Evento...",
-		"createEventButton": "Crea Evento"
+		"createEventButton": "Crea Evento",
+		"hostPasswordTitle": "Solo per organizzatori",
+		"hostPasswordDescription": "Per creare eventi su questo sito serve la password degli organizzatori. Agli ospiti non serve: aprono il link di un evento e rispondono senza.",
+		"hostPasswordLabel": "Password degli organizzatori",
+		"hostPasswordButton": "Continua",
+		"openCreationNotice": "Chiunque apra questo sito può creare eventi. Per riservarlo ai tuoi organizzatori, chi gestisce il sito può impostare una password: salva HOST_PASSWORD come valore nascosto nelle impostazioni dell'hosting, poi pubblica di nuovo."
 	},
 	"event": {
 		"title": "{eventName} - Cactoide",

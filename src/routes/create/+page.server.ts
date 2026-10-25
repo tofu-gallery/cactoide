@@ -1,9 +1,20 @@
+// Tofu (modified 2026-10-25): the optional host password ($lib/server/hostPassword.ts). The page's load says whether
+// this browser may create events; the create action (named `create`, was the default action) refuses without the
+// pass; `unlock` checks a typed password.
 import { database } from '$lib/database/db';
 import { events, inviteTokens } from '$lib/database/schema';
 import { fail, redirect } from '@sveltejs/kit';
-import type { Actions } from './$types';
+import type { Actions, PageServerLoad } from './$types';
 import { generateInviteToken, calculateTokenExpiration } from '$lib/inviteTokenHelpers.js';
 import { logger } from '$lib/logger';
+import { hostPassword, mayCreateEvents, unlockHost } from '$lib/server/hostPassword';
+
+export const load: PageServerLoad = async ({ cookies }) => {
+	return {
+		hostPasswordSet: hostPassword() !== null,
+		mayCreate: mayCreateEvents(cookies)
+	};
+};
 
 // Generate a random URL-friendly ID
 function generateEventId(): string {
@@ -16,7 +27,18 @@ function generateEventId(): string {
 }
 
 export const actions: Actions = {
-	default: async ({ request, cookies }) => {
+	unlock: async ({ request, cookies }) => {
+		const formData = await request.formData();
+		const typed = formData.get('hostPassword');
+
+		if (!(await unlockHost(cookies, typeof typed === 'string' ? typed : ''))) {
+			return fail(403, { hostError: 'That is not the host password.' });
+		}
+
+		throw redirect(303, '/create');
+	},
+
+	create: async ({ request, cookies }) => {
 		const formData = await request.formData();
 
 		const name = formData.get('name') as string;
@@ -29,6 +51,23 @@ export const actions: Actions = {
 		const attendeeLimit = formData.get('attendee_limit') as string;
 		const visibility = formData.get('visibility') as 'public' | 'private' | 'invite-only';
 		const userId = cookies.get('cactoideUserId');
+
+		if (!mayCreateEvents(cookies)) {
+			return fail(403, {
+				error: 'Only hosts can create events here. Enter the host password first.',
+				values: {
+					name,
+					date,
+					time,
+					location,
+					location_type: locationType,
+					location_url: locationUrl,
+					type,
+					attendee_limit: attendeeLimit,
+					visibility
+				}
+			});
+		}
 
 		// Validation
 		const missingFields: string[] = [];

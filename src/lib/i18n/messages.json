@@ -176,7 +176,12 @@
 		"privateDescription": "Private events are only visible to you and people you share the link with.",
 		"inviteOnlyDescription": "Event is public but requires a special invite link to attend.",
 		"creatingEvent": "Creating Event...",
-		"createEventButton": "Create Event"
+		"createEventButton": "Create Event",
+		"hostPasswordTitle": "Hosts only",
+		"hostPasswordDescription": "Creating events on this site needs the host password. Guests don't need it: they open an event's link and reply without it.",
+		"hostPasswordLabel": "Host password",
+		"hostPasswordButton": "Continue",
+		"openCreationNotice": "Anyone who opens this site can create events. To keep that to your own hosts, the site's owner can set a host password: save HOST_PASSWORD as a hidden value in the hosting settings, then deploy again."
 	},
 	"event": {
 		"title": "{eventName} - Cactoide",
