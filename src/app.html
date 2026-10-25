@@ -6,12 +6,8 @@
 		<link rel="icon" type="image/x-icon" href="/favicon.ico" />
 		%sveltekit.head%
 
-		<!-- Remove if you don't want to use analytics -->
-		<script
-			defer
-			src="https://analytics.dalev.hu/script.js"
-			data-website-id="7425d098-e340-4464-bd03-c2e47b004cd9"
-		></script>
+		<!-- Tofu (modified 2026-10-25): upstream's analytics script (its author's own Umami site) is removed, so a
+		     copy does not report its visitors to a third party. -->
 	</head>
 	<body data-sveltekit-preload-data="hover">
 		<div style="display: contents">%sveltekit.body%</div>
