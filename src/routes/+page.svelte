@@ -2,6 +2,8 @@
 	import { goto } from '$app/navigation';
 	import { t } from '$lib/i18n/i18n.js';
 	import FeatureCard from '$lib/components/FeatureCard.svelte';
+	// Tofu (modified 2026-10-25): "View on GitHub" opens this copy's own source (AGPL-3.0 section 13), not upstream's.
+	import { sourceUrl } from '$lib/sourceUrl';
 </script>
 
 <svelte:head>
@@ -26,7 +28,7 @@
 			<!-- Open Source Section -->
 			<div class="mt-8 flex items-center justify-center gap-3">
 				<a
-					href="https://github.com/polaroi8d/cactoide"
+					href={sourceUrl()}
 					target="_blank"
 					rel="noopener noreferrer"
 					class="group flex items-center gap-2 rounded-sm border-2 border-violet-500/50 px-6 py-3 text-sm font-medium transition-all duration-300 hover:scale-105 hover:border-violet-500 hover:bg-violet-500/10 md:text-base"

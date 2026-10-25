@@ -1,7 +1,9 @@
 <script>
 	import '../app.css';
+	// Tofu (modified 2026-10-25): the footer links this copy's own source code on every page (AGPL-3.0 section 13).
 	import Navbar from '$lib/components/Navbar.svelte';
 	import { t } from '$lib/i18n/i18n.js';
+	import { sourceUrl } from '$lib/sourceUrl';
 
 	let { children } = $props();
 </script>
@@ -29,6 +31,14 @@
 			<div class="container mx-auto px-4 text-center">
 				<div class="text-sm">
 					<p>{t('layout.copyright')}</p>
+					<p class="mt-2">
+						<a
+							href={sourceUrl()}
+							target="_blank"
+							rel="noopener noreferrer"
+							class="underline hover:text-violet-400">{t('layout.sourceCode')}</a
+						>
+					</p>
 				</div>
 			</div>
 		</footer>

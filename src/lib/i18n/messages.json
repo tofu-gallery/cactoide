@@ -291,6 +291,7 @@
 	"layout": {
 		"defaultTitle": "Cactoide -",
 		"defaultDescription": "Create and manage event RSVPs",
-		"copyright": "© 2025 Cactoide"
+		"copyright": "© 2025 Cactoide",
+		"sourceCode": "Source code"
 	}
 }
