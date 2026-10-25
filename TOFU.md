@@ -1,0 +1,108 @@
+# Tofu gallery copy
+
+This repository is Tofu's copy of **polaroi8d/cactoide** (licence: AGPL-3.0), listed in Tofu's app gallery as an event page that guests reply to, so the host sees who is coming.
+
+- `main` mirrors the upstream repository and is never committed to by Tofu.
+- `tofu` carries Tofu's own changes; tags named `pin/<date>` mark the versions the gallery points to.
+- A visitor who chooses this app gets a private snapshot of the pinned version in their own Tofu account. Their copy does not follow upstream updates.
+
+## What the app is
+
+Cactoide is an RSVP site. A host creates an event (name, date, time, an optional place or map link, an optional limit on how many people can come, and whether it is public, private or invite-only) and shares its link. Guests open the link, type their name (and how many guests they bring) and appear on the event's list of attendees; the host sees who is coming, and can edit or delete the event. There are no accounts: each browser gets a random id in a cookie, which is what makes someone the host of the events they created and the owner of the replies they added. Public events are listed on `/discover`. Upstream: https://github.com/polaroi8d/cactoide, forked at commit `7a07d7439ff87eb5dfa9c8ad3787646c764693f3` (2025-11-10, version 0.1.1).
+
+## How Tofu runs it
+
+| | |
+|---|---|
+| Preset | `sveltekit` (SvelteKit 2, Svelte 5, Vite 7), on Tofu's server hosting |
+| Root folder | the repository root |
+| Install | the host's `npm install`, from `package-lock.json` |
+| Build | `npm run build`: `node scripts/tofu-migrate.mjs && vite build` (see *Schema*) |
+| Output | `.vercel/output`, written by `@sveltejs/adapter-vercel` 6.3.4: one Node.js function (Node 20, 22 or 24, whichever the build runs on) and the static files |
+| Database | Tofu's managed PostgreSQL, created with the first deploy. The app reads `DATABASE_URL` (Tofu's transaction pooler) through postgres.js with unnamed statements; the other database settings Tofu saves (the Data API address and public key, `SUPABASE_CA_CERT`) are not used |
+| Schema | `supabase/migrations/20251110000000_cactoide_init.sql`, applied by the build's first step (see *Schema*) |
+| Public settings | `PUBLIC_SOURCE_URL`, which the gallery sets to this pin's source (see *Source code*). Nothing else is needed: event links are built from the address a page is opened at |
+| Hidden values | none needed. `HOST_PASSWORD` is optional (see *Who can create events*) |
+
+## Who can create events
+
+Upstream lets anyone who opens the site create events, and a copy is online at a public address. So a copy takes an optional **host password**:
+
+- `HOST_PASSWORD` unset (the default): anyone who opens the copy can create events, as upstream. The create page says so under its form, and says how to change it.
+- `HOST_PASSWORD` set (save it on the app's Keys & settings page with *Hide this value after saving*, then deploy again): the create page asks for it once per browser. A browser that typed it keeps a pass cookie for up to 400 days. The cookie holds an HMAC keyed by the password, never the password, so **changing `HOST_PASSWORD` ends every pass at once** (every host types the new one). A wrong password answers after a second, which slows down guessing; a long passphrase is still the real protection, since nothing counts attempts. Leading and trailing spaces are ignored.
+- Either way, guests open events, reply and remove their own replies without it, and a host can still edit or delete only the events their own browser created.
+
+There is no administrator. Nothing in the app removes another browser's event, so an event a stranger created before the password was set stays until it is deleted in the database itself.
+
+## Schema: what applies `supabase/migrations`
+
+Upstream creates its tables only through docker-compose (`database/init.sql` mounted into the PostgreSQL container); nothing in the app creates them. On Tofu the build does:
+
+1. `scripts/tofu-migrate.mjs` runs before `vite build`. It creates the Supabase CLI's migration ledger (`supabase_migrations.schema_migrations`) the way Tofu creates it, then applies each file in `supabase/migrations` the ledger does not record, in file-name order, each in one transaction that writes its ledger row first. So neither this script, Tofu nor the Supabase CLI runs a file twice. Without `DATABASE_URL` it applies nothing, so upstream's Docker image and local builds are unchanged. A file that fails stops the build, and the version already online keeps serving.
+2. Tofu reads the build command, finds a step whose name says it migrates, and leaves the folder to the build (it applies `supabase/migrations` itself only for a build that runs no such step), so Tofu opens nothing to its Data API for these tables.
+3. `20251110000000_cactoide_init.sql` is upstream's `init.sql` without `BEGIN`/`COMMIT` (whatever applies it runs it in a transaction of its own) and without `CREATE EXTENSION pgcrypto` (`gen_random_uuid()` is built into PostgreSQL 13 and later), plus row-level security turned on for `events`, `rsvps` and `invite_tokens`, with no policy. The app's own connection owns the tables and is not limited by it; on a database whose old default still opens every new table to the Data API's roles, these lines are what keep anyone holding the database's public key from every row (each browser's id, which is its only credential, is in those rows). **Never remove those lines, and give any table a new file creates the same line.** When a later upstream version changes `database/init.sql`, add a new file with only the change.
+
+## What Tofu changes
+
+One commit each, every one titled `Tofu: …` with its reason:
+
+- `svelte.config.js`, `Dockerfile`, `package.json`, `package-lock.json`: builds with `@sveltejs/adapter-vercel` 6.3.4 (a new dev dependency; the 6.x line is the one for SvelteKit 2), which Tofu's `sveltekit` preset runs. `CACTOIDE_ADAPTER=node` builds upstream's Node server instead, and the Dockerfile sets it. The lockfile otherwise only adds the adapter's own dependencies and moves `minipass` 7.1.2 → 7.1.3 and `picomatch` 4.0.3 → 4.0.7, which npm chose to share them.
+- `src/app.html`: upstream's analytics script (its author's own Umami site, `analytics.dalev.hu`) is removed, so a copy does not report its visitors to a third party.
+- `src/lib/database/db.ts`, `src/lib/database/healthCheck.ts`: `prepare: false`. Tofu's `DATABASE_URL` is a transaction pooler, which keeps no prepared statements between transactions.
+- `supabase/migrations/20251110000000_cactoide_init.sql` (new), `scripts/tofu-migrate.mjs` (new), `package.json` (`build`): the schema at build (see *Schema*).
+- `src/lib/sourceUrl.ts` (new), `src/routes/+layout.svelte`, `src/routes/+page.svelte`, `static/llms.txt`, `src/lib/i18n/messages.json`, `src/lib/i18n/it.json`: the source link (see *Source code*).
+- `src/lib/server/hostPassword.ts` (new), `src/routes/create/+page.server.ts`, `src/routes/create/+page.svelte`, `messages.json`, `it.json`: the host password (see *Who can create events*). The create action is now named `create` (it was the default action) and the page's form posts to `?/create`; `unlock` checks the password.
+- `src/routes/event/[id]/+page.server.ts`: removing a reply now needs the browser that added it, as the page's own Remove button (shown on your own replies only) and the invite page's `removeRSVP` already intended. Upstream deleted any reply whose id was posted, and every reply's id is sent to everyone who opens the event.
+- `TOFU.md`: this file.
+
+Nothing else changed: the pages, the name, the strings (but the new ones) and the logo are upstream's.
+
+## What works differently on Tofu
+
+- **Federation stays off.** `federation.config.js` lists no other instances (as upstream ships it), so the copy fetches no one's events, and `/api/federation/*` answer 403 while `FEDERATION_INSTANCE` is unset. Leave it unset: the app treats any value, even `false`, as on. `/instance` shows *No federation instances configured*.
+- **Identity is the browser.** Clearing cookies, or another device, means a host can no longer edit or delete their earlier events, and a guest can no longer remove their reply (upstream's design).
+- **"Today" is the server's day.** Creating or editing an event refuses a date before the server's today, and Tofu's server runs on UTC; late in the evening west of UTC, today's local date can be refused as past.
+- **Logs** are pino's JSON lines in the app's logs. Leave `LOG_PRETTY` unset: `pino-pretty` runs in a worker thread, which was not tried on Tofu's hosting.
+- **Database TLS.** postgres.js reads `sslmode=require` in `DATABASE_URL` as encrypted without verifying the server's certificate (libpq's meaning of `require`); the app does not use `SUPABASE_CA_CERT` to verify it.
+- **Docker.** The `Dockerfile` and `docker-compose.yml` are upstream's self-hosting path (Node adapter, tables from `database/init.sql`, no row-level security). Tofu does not use them; a root `Dockerfile` makes Tofu's detector suggest `container`, and the gallery sets `sveltekit`.
+
+## Optional settings
+
+| Name | What it does | Kind |
+|---|---|---|
+| `HOST_PASSWORD` | Keeps event creation to the browsers that typed it (see *Who can create events*). | hidden value |
+| `PUBLIC_SOURCE_URL` | Where the footer's *Source code* link and the home page's *View on GitHub* point. The gallery sets it to this pin's source; unset, they open this fork's `tofu` branch. | public |
+| `PUBLIC_LANDING_INFO` | `false` opens the site on `/discover` instead of upstream's home page. | public |
+| `LOG_LEVEL` | pino's level, `info` by default. | public |
+
+Leave unset: `FEDERATION_INSTANCE` (see above), `LOG_PRETTY`, `CACTOIDE_ADAPTER`.
+
+## Source code
+
+AGPL-3.0 section 13 asks a modified copy that people use over a network to offer them its source. Every page's footer has a *Source code* link, and the home page's *View on GitHub* button opens the same address: `PUBLIC_SOURCE_URL` when it is a web address, else https://github.com/tofu-gallery/cactoide/tree/tofu. Nobody signs in to Cactoide, so every visitor sees it. `static/llms.txt` links this fork's `tofu` branch, since a static file cannot read a setting.
+
+## Licence
+
+AGPL-3.0. `LICENSE` and the footer's `© 2025 Cactoide` stay exactly as upstream has them. Every file Tofu changed carries a dated `Tofu` note where its format allows a comment; `package.json`, `package-lock.json`, `messages.json` and `it.json` are JSON, which takes no comments, so this file lists them above. The name **Cactoide** is upstream's; the copy shows it because it runs Cactoide, and implies no endorsement. The favicon and `docs/federation_example.png` ship as upstream distributes them.
+
+## Verification (2026-10-25)
+
+On a Mac (Node 22.22.3, npm 10.9.8), against a throwaway local PostgreSQL 14 database (`cactoide_r9b`, dropped afterwards). No deployment and no Docker. The code was checked at commit `bffac224d239deb6550db8d72c24727921c01598` (the commit before this file).
+
+- A tree with no executable file, as Tofu's import delivers one: `git archive tofu | tar -x`, then `chmod a-x` on every file (0 executable files left), and `.npmrc` removed (Tofu does not upload it). Everything below ran from that tree.
+- `npm ci`: 298 packages. `npx svelte-check`: 6 errors, all in files Tofu did not touch (upstream's own: `fetchFederatedEvents.ts`, `discover/+page.server.ts`, `instance/+page.server.ts`, and `db.ts`'s `env.DATABASE_URL` typed as possibly undefined, on a line Tofu did not change).
+- `DATABASE_URL=<that database> npm run build`: passed; `[tofu-migrate] 1 applied, 0 already recorded, 1 files.`, then *Using @sveltejs/adapter-vercel ✔ done*, function runtime `nodejs22.x`. The database then held `events`, `rsvps` and `invite_tokens`, all three with row-level security, and one ledger row (`20251110000000 cactoide_init`). A second build printed `0 applied, 1 already recorded, 1 files.`
+- The build's real Vercel function (`.vercel/output/functions/…/catchall.func`, with the files the adapter traced into it: postgres, drizzle-orm, pino and the rest), copied away from the tree so that nothing outside it could be loaded, served on a free 127.0.0.1 port by a small harness standing in for Vercel's front (static files first, then the function's `fetch`, with the request seen as `https://`). `/`, `/discover`, `/create`, `/event`, `/instance` and `/api/healthz` (`{"ok":true}`) answered 200, `/llms.txt` 200, an unknown path 404; `/api/federation/events` answered 403 (federation off); the pages carry no analytics script, and the footer and *View on GitHub* link `https://github.com/tofu-gallery/cactoide/tree/tofu`.
+- As three browsers (cookies): the host created *Team lunch* (303 to `/event/<id>`); Frank replied with one guest and Mike replied (200 each); the event page listed *Frank*, *Frank's Guest #1* and *Mike*. A stranger's delete of the host's event was refused (403); a post from another site was refused (403); a stranger removing Frank's reply was refused (404) and the reply stayed; Frank removed his own guest (200).
+- With `HOST_PASSWORD` set (with spaces around it): `/create` showed the password form; creating without the pass was refused (403); a wrong password was refused after one second (403); the right one (typed without the spaces) answered 303 to `/create` with an `HttpOnly`, `SameSite=Lax` pass cookie; with it, `/create` showed the event form and an event was created (303); a made-up pass was refused (403); a guest could still reply (200).
+- Row-level security: a role granted `select, insert, update, delete` on the three tables (as the Data API's roles are, on a database with the old default) saw 0 events, 0 replies and 0 invite tokens where the app's own connection saw 2 and 3; its insert was refused by row-level security, and its update and delete of replies changed nothing.
+- Headless Chromium (Playwright) against 127.0.0.1 only, every other host refused (none was asked for): the six pages loaded; a reply typed into the event page's own form and an event created through the create page's own form both worked (the browser landed on the new event's page). No page errors and no console errors.
+- Tofu's own GitHub import and checks, run from Tofu's code (`lane_check_r9.mts`) on the `tofu` branch and on the pin's tag: see the gallery's records for the exact lines.
+
+## Needs a real deploy to verify
+
+- Tofu's `sveltekit` preset builds the app with the host's `npm install` and `npm run build`, and the Node version the host picks is one adapter-vercel 6.3.4 supports (20, 22 or 24).
+- `DATABASE_URL` is present at build time, so `tofu-migrate.mjs` creates the tables in the new managed database through its transaction pooler, and Tofu leaves `supabase/migrations` to the build as described above.
+- The app reaches the database through the pooler with `prepare: false` and `sslmode=require`, on the first request and on a function instance that has served many.
+- Cookies are set `Secure` behind HTTPS, and the host password's pass works across the copy's own address.
+- `/api/healthz` on the copy's address answers `{"ok":true}`, and the function's logs show pino's JSON lines.
