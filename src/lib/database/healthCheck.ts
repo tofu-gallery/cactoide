@@ -47,10 +47,12 @@ export async function checkDatabaseHealth(
 
 		try {
 			// Create a new connection for the health check
+			// Tofu (modified 2026-10-25): prepare: false, as in db.ts (Tofu's DATABASE_URL is a transaction pooler)
 			const client = postgres(env.DATABASE_URL, {
 				max: 1,
 				idle_timeout: 20,
 				connect_timeout: timeout / 1000, // Convert to seconds
+				prepare: false,
 				onnotice: () => {} // Suppress notices
 			});
 
