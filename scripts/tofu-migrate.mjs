@@ -1,4 +1,4 @@
-// Tofu (new file, 2026-10-25; the lock and the exit on failure, 2026-10-27): applies supabase/migrations at the start of
+// Tofu (new file, 2026-10-25; the lock and the exits, 2026-10-27): applies supabase/migrations at the start of
 // the build (see TOFU.md, Schema).
 //
 // Each file the database's migration ledger does not record yet (the Supabase CLI's own
@@ -18,9 +18,10 @@ import postgres from 'postgres';
 // (pg_advisory_lock) could stay behind on a server connection the pooler then lends to someone else.
 const LOCK_KEY = 'scripts/tofu-migrate.mjs';
 const LOCK = `pg_advisory_xact_lock(hashtext('${LOCK_KEY}'))`;
-// The wait for the lock is bounded. statement_timeout is set above that bound for the wait, so a role's own limit
-// (two minutes for Supabase's postgres role) cannot end it first with a less clear error; once the lock is held, both
-// go back to their defaults (the role's or the database's own values) for the rest of the transaction.
+// The wait for the lock is bounded. statement_timeout is set above that bound for the wait, so a limit set for the
+// database or the role (Supabase's two-minute global default, which caps its postgres role) cannot end it first with a
+// less clear error; once the lock is held, both go back to their defaults (the role's or the database's own values) for
+// the rest of the transaction.
 const LOCK_WAIT = '120s';
 const LOCK_STATEMENT_LIMIT = '150s';
 
@@ -122,5 +123,9 @@ if (failure) {
 	const message = `[tofu-migrate] failed: ${failure instanceof Error ? failure.message : 'unknown error'}`;
 	process.stderr.write(message + '\n', () => process.exit(1));
 } else {
+	// Close the connection, waiting at most 5 s for the server to close its end, then exit once the output is written:
+	// the same half-closed socket would otherwise keep this process, and the build, alive when the server or the network
+	// path never closes its end.
 	await sql.end({ timeout: 5 });
+	process.stdout.write('', () => process.exit(0));
 }
