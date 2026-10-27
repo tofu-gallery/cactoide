@@ -37,7 +37,9 @@ const files = readdirSync(directory)
 	.filter((name) => /^[0-9]+_[^/]*\.sql$/.test(name))
 	.sort();
 
-const sql = postgres(url, { max: 1, prepare: false, connect_timeout: 30, onnotice: () => {} });
+// Made inside the try below, so that an error from making it (a DATABASE_URL postgres.js cannot read) is printed as a
+// message alone as well: Node prints an uncaught error with its properties, and that one carries the whole URL.
+let sql;
 
 // The first statements of every transaction below.
 async function takeLock(tx) {
@@ -64,6 +66,7 @@ async function takeLock(tx) {
 let failure;
 
 try {
+	sql = postgres(url, { max: 1, prepare: false, connect_timeout: 30, onnotice: () => {} });
 	const recorded = await sql.begin(async (tx) => {
 		await takeLock(tx);
 		await tx`create schema if not exists supabase_migrations`;
