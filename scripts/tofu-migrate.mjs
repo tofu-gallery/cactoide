@@ -1,13 +1,28 @@
-// Tofu (new file, 2026-10-25): applies supabase/migrations at the start of the build (see TOFU.md, Schema).
+// Tofu (new file, 2026-10-25; the lock and the exit on failure, 2026-10-27): applies supabase/migrations at the start of
+// the build (see TOFU.md, Schema).
 //
 // Each file the database's migration ledger does not record yet (the Supabase CLI's own
 // supabase_migrations.schema_migrations, created the way Tofu creates it) is applied in file-name order, each in one
-// transaction with its ledger row, so neither this script, Tofu nor the Supabase CLI ever runs a file twice. Without
-// DATABASE_URL it applies nothing, so a build anywhere else (upstream's Docker image, a laptop) is unchanged. It uses
-// the app's own driver (postgres.js) with unnamed statements, which Tofu's transaction pooler accepts.
+// transaction with its ledger row, so neither this script, Tofu nor the Supabase CLI ever runs a file twice. Two builds
+// of one copy can run at the same time (a deploy started while the one before it still builds), so every transaction
+// here first takes one advisory lock: one build at a time creates the ledger or applies a file, and the other waits,
+// then reads the ledger again and finds the file recorded. Without DATABASE_URL it applies nothing, so a build anywhere
+// else (upstream's Docker image, a laptop) is unchanged. It uses the app's own driver (postgres.js) with unnamed
+// statements, which Tofu's transaction pooler accepts.
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import postgres from 'postgres';
+
+// A transaction-level lock: Tofu's transaction pooler keeps a transaction on one server connection from its BEGIN to
+// its end, and PostgreSQL lets go of the lock when the transaction ends, however the build ends. A session-level lock
+// (pg_advisory_lock) could stay behind on a server connection the pooler then lends to someone else.
+const LOCK_KEY = 'scripts/tofu-migrate.mjs';
+const LOCK = `pg_advisory_xact_lock(hashtext('${LOCK_KEY}'))`;
+// The wait for the lock is bounded. statement_timeout is set above that bound for the wait, so a role's own limit
+// (two minutes for Supabase's postgres role) cannot end it first with a less clear error; once the lock is held, both
+// go back to their defaults (the role's or the database's own values) for the rest of the transaction.
+const LOCK_WAIT = '120s';
+const LOCK_STATEMENT_LIMIT = '150s';
 
 const url = process.env.DATABASE_URL?.trim();
 
@@ -23,14 +38,42 @@ const files = readdirSync(directory)
 
 const sql = postgres(url, { max: 1, prepare: false, connect_timeout: 30, onnotice: () => {} });
 
-try {
-	await sql`create schema if not exists supabase_migrations`;
-	await sql`create table if not exists supabase_migrations.schema_migrations (version text not null primary key)`;
-	await sql`alter table supabase_migrations.schema_migrations add column if not exists statements text[], add column if not exists name text, add column if not exists created_by text`;
+// The first statements of every transaction below.
+async function takeLock(tx) {
+	await tx
+		.unsafe(
+			`set local lock_timeout = '${LOCK_WAIT}'; set local statement_timeout = '${LOCK_STATEMENT_LIMIT}'`
+		)
+		.simple();
+	try {
+		await tx`select pg_advisory_xact_lock(hashtext(${LOCK_KEY}))`;
+	} catch (error) {
+		if (error?.code === '55P03') {
+			throw new Error(
+				`the migration lock ${LOCK} was still held by another session after ${LOCK_WAIT} (most likely another build of this app, applying migrations), so this build stops. Deploy again once that build has finished.`
+			);
+		}
+		throw error;
+	}
+	await tx
+		.unsafe('set local lock_timeout to default; set local statement_timeout to default')
+		.simple();
+}
 
-	const recorded = new Set(
-		(await sql`select version from supabase_migrations.schema_migrations`).map((row) => row.version)
-	);
+let failure;
+
+try {
+	const recorded = await sql.begin(async (tx) => {
+		await takeLock(tx);
+		await tx`create schema if not exists supabase_migrations`;
+		await tx`create table if not exists supabase_migrations.schema_migrations (version text not null primary key)`;
+		await tx`alter table supabase_migrations.schema_migrations add column if not exists statements text[], add column if not exists name text, add column if not exists created_by text`;
+		return new Set(
+			(await tx`select version from supabase_migrations.schema_migrations`).map(
+				(row) => row.version
+			)
+		);
+	});
 	let applied = 0;
 
 	for (const file of files) {
@@ -42,24 +85,42 @@ try {
 
 		const text = readFileSync(join(directory, file), 'utf8');
 
-		await sql.begin(async (tx) => {
-			// The ledger row goes in first, so a build racing this one stops on its primary key instead of applying twice.
-			await tx`insert into supabase_migrations.schema_migrations (version, name) values (${version}, ${name})`;
-			// The file whole, as one simple-protocol query (it holds several statements).
+		const appliedHere = await sql.begin(async (tx) => {
+			await takeLock(tx);
+			// Read again under the lock: a build that held it first may have applied the file while this one waited.
+			const [found] =
+				await tx`select version from supabase_migrations.schema_migrations where version = ${version}`;
+			if (found) {
+				return false;
+			}
+			// The file whole, as one simple-protocol query (it holds several statements), then its ledger row.
 			await tx.unsafe(text).simple();
+			await tx`insert into supabase_migrations.schema_migrations (version, name) values (${version}, ${name})`;
+			return true;
 		});
 
-		applied += 1;
-		console.log(`[tofu-migrate] applied ${file}`);
+		if (appliedHere) {
+			applied += 1;
+			console.log(`[tofu-migrate] applied ${file}`);
+		} else {
+			console.log(`[tofu-migrate] ${file} was applied by another build while this one waited`);
+		}
 	}
 
 	console.log(
 		`[tofu-migrate] ${applied} applied, ${files.length - applied} already recorded, ${files.length} files.`
 	);
 } catch (error) {
-	// The message alone: a connection error object can carry the URL, and with it the password.
-	console.error(`[tofu-migrate] failed: ${error instanceof Error ? error.message : 'unknown error'}`);
-	process.exitCode = 1;
-} finally {
+	failure = error;
+}
+
+if (failure) {
+	// The message alone: a connection error object can carry the URL, and with it the password. Then exit as soon as it
+	// is written, without closing the connection: postgres.js closes one it gives up on by half-closing its socket, which
+	// keeps this process, and the build, alive until the server closes its end or TCP gives up. PostgreSQL rolls back a
+	// transaction whose connection goes away, and the lock goes with it.
+	const message = `[tofu-migrate] failed: ${failure instanceof Error ? failure.message : 'unknown error'}`;
+	process.stderr.write(message + '\n', () => process.exit(1));
+} else {
 	await sql.end({ timeout: 5 });
 }
