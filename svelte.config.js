@@ -1,5 +1,7 @@
-// Tofu (modified 2026-10-25): builds with @sveltejs/adapter-vercel by default, which is what Tofu's SvelteKit hosting
-// runs. Set CACTOIDE_ADAPTER=node to build the standalone Node server instead (upstream's adapter); the Dockerfile does.
+// Tofu (modified 2026-10-25, 2026-10-30): builds with @sveltejs/adapter-vercel by default, which is what Tofu's SvelteKit
+// hosting runs. Set CACTOIDE_ADAPTER=node to build the standalone Node server instead (upstream's adapter); the Dockerfile does.
+// The function runtime is named (nodejs24.x): adapter-vercel 6.3.4 takes the Node major the build runs on as the runtime
+// and throws for any major but 20, 22 and 24, and Vercel's default for a new project has been Node 26 since 2026-10-29.
 import adapterNode from '@sveltejs/adapter-node';
 import adapterVercel from '@sveltejs/adapter-vercel';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
@@ -21,7 +23,7 @@ const config = {
 					edge: false,
 					split: false
 				})
-			: adapterVercel()
+			: adapterVercel({ runtime: 'nodejs24.x' })
 	}
 };
 
