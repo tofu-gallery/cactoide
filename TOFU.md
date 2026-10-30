@@ -18,7 +18,7 @@ Cactoide is an RSVP site. A host creates an event (name, date, time, an optional
 | Root folder | the repository root |
 | Install | the host's `npm install`, from `package-lock.json` |
 | Build | `npm run build`: `node scripts/tofu-migrate.mjs && vite build` (see *Schema*) |
-| Output | `.vercel/output`, written by `@sveltejs/adapter-vercel` 6.3.4: one Node.js function (Node 20, 22 or 24, whichever the build runs on) and the static files |
+| Output | `.vercel/output`, written by `@sveltejs/adapter-vercel` 6.3.4: one Node.js function, which `svelte.config.js` names `nodejs24.x` whatever Node the build runs on (see *What Tofu changes*), and the static files |
 | Database | Tofu's managed PostgreSQL, created with the first deploy. The app reads `DATABASE_URL` (Tofu's transaction pooler) through postgres.js with unnamed statements; the other database settings Tofu saves (the Data API address and public key, `SUPABASE_CA_CERT`) are not used |
 | Schema | `supabase/migrations/20251110000000_cactoide_init.sql`, applied by the build's first step (see *Schema*) |
 | Public settings | `PUBLIC_SOURCE_URL`, which the gallery sets to this pin's source (see *Source code*). Nothing else is needed: event links are built from the address a page is opened at |
@@ -55,6 +55,7 @@ One commit each, every one titled `Tofu: …` with its reason:
 - `src/lib/sourceUrl.ts` (new), `src/routes/+layout.svelte`, `src/routes/+page.svelte`, `static/llms.txt`, `src/lib/i18n/messages.json`, `src/lib/i18n/it.json`: the source link (see *Source code*).
 - `src/lib/server/hostPassword.ts` (new), `src/routes/create/+page.server.ts`, `src/routes/create/+page.svelte`, `messages.json`, `it.json`: the host password (see *Who can create events*). The create action is now named `create` (it was the default action) and the page's form posts to `?/create`; `unlock` checks the password.
 - `src/routes/event/[id]/+page.server.ts`: removing a reply now needs the browser that added it, as the page's own Remove button (shown on your own replies only) and the invite page's `removeRSVP` already intended. Upstream deleted any reply whose id was posted, and every reply's id is sent to everyone who opens the event.
+- `svelte.config.js` (2026-10-30): `adapterVercel({ runtime: 'nodejs24.x' })` instead of `adapterVercel()`. adapter-vercel 6.3.4, the newest 6.x, takes the Node major the build runs on as the function's runtime and throws for any major but 20, 22 and 24 (`Unsupported Node.js version: v26.13.0. Please use Node 20, 22, or 24 to build your project, or explicitly specify a runtime in your adapter configuration`). Node 26 is the default of a new Vercel project since 2026-10-29, so a new copy's build would stop at the adapter. The function is now named `nodejs24.x` (the generated `.vc-config.json` says so) and the build runs on whatever Node the host picks. Version 7 of the adapter accepts `nodejs26.x` but needs SvelteKit 3. The Docker build (`CACTOIDE_ADAPTER=node`) is not affected.
 - `TOFU.md`: this file.
 
 Nothing else changed: the pages, the name, the strings (but the new ones) and the logo are upstream's.
@@ -113,9 +114,16 @@ On a Mac (Node 22.22.3, npm 10.9.8; `npm ci`: 298 packages), against a throwaway
 - `npx prettier --check` and `npx eslint` on the script: no findings.
 - The last change, `postgres()` called inside the `try`, was checked on the final script. A `DATABASE_URL` postgres.js cannot read (`postgres://app:<a made-up password>@[bad/x`): it printed `[tofu-migrate] failed: Invalid URL` and exited 1, where the script before this change ended in Node's own print of an uncaught `TypeError: Invalid URL`, which includes the whole URL, password and all, and exited 1. Nothing listening on the port: `[tofu-migrate] failed: connect ECONNREFUSED 127.0.0.1:1`, no password. No or a blank `DATABASE_URL`: exit 0. Against the scratch cluster: three times two builds at once on new databases (both exited 0; one applied the file, the other said it was applied by another build while it waited; one ledger row, row-level security on `events`, `rsvps` and `invite_tokens`, no advisory lock left), once three builds at once with the empty ledger made beforehand (the same), a third run on a finished database (`0 applied, 1 already recorded, 1 files.`, exit 0 after 0.1 s), and a file that fails (an `events` table made beforehand without the columns the file needs, with a made-up password in the URL): exit 1 after 0.1 s with the message alone, no password in the output, no ledger row, nothing but that `events` table in `public`, no advisory lock left.
 
+## Verification of the function runtime (2026-10-30)
+
+On a Mac, with the official Node.js 26.13.0 (npm 11.20.0) and 24.22.2 (npm 11.19.1), each downloaded and checked against nodejs.org's `SHASUMS256.txt`. Everything ran from a tree made by `git archive` of the commit before this note (no `.git`), with `VERCEL=1`, `CI=1` and `NOW_BUILDER=1` set and no `DATABASE_URL`. No deployment and no database.
+
+- Before the change, `npm install` and `npm run build` on Node.js 26.13.0 stopped at the adapter: `Unsupported Node.js version: v26.13.0 …` (`@sveltejs/adapter-vercel/utils.js:132`, reached from `index.js:274` for every route).
+- With the change, on Node.js 26.13.0 and on 24.22.2: `npm install` installed, `npx prettier --check svelte.config.js` passed, and `npm run build` passed (`[tofu-migrate] DATABASE_URL is not set; nothing to apply.`, then *Using @sveltejs/adapter-vercel ✔ done*). The generated `.vercel/output/functions/…/.vc-config.json` says `"runtime": "nodejs24.x"` in both.
+
 ## Needs a real deploy to verify
 
-- Tofu's `sveltekit` preset builds the app with the host's `npm install` and `npm run build`, and the Node version the host picks is one adapter-vercel 6.3.4 supports (20, 22 or 24).
+- Tofu's `sveltekit` preset builds the app with the host's `npm install` and `npm run build` on the Node the host picks (26 for a new project since 2026-10-29), and the function is named `nodejs24.x`. That the host runs a `nodejs24.x` function from a project built on another Node is read from the generated `.vc-config.json`, not seen.
 - `DATABASE_URL` is present at build time, so `tofu-migrate.mjs` creates the tables in the new managed database through its transaction pooler, and Tofu leaves `supabase/migrations` to the build as described above.
 - Two builds of one copy at once, through that pooler: the second waits for the first's lock, then finds the file recorded (checked on 2026-10-27 over a direct connection to a local PostgreSQL only).
 - The app reaches the database through the pooler with `prepare: false` and `sslmode=require`, on the first request and on a function instance that has served many.
